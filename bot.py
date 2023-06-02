@@ -25,10 +25,16 @@ async def on_message(message: discord.Message):
         return
     if message.reference is not None:
         ref_msg = await message.channel.fetch_message(message.reference.message_id)
+        if ref_msg.author != client.user:
+            return
         reference = ref_msg.content
     elif message.channel.type in [discord.ChannelType.public_thread, discord.ChannelType.private_thread]:
         history = await message.channel.history(limit=2).flatten()
-        if len(history) != 2 or history[1].type != discord.MessageType.thread_starter_message:
+        if len(history) != 2:
+            return
+        if history[1].type != discord.MessageType.thread_starter_message:
+            return
+        if history[1].author != client.user:
             return
         reference = history[1].system_content
     else:
