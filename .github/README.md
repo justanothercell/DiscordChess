@@ -24,5 +24,4 @@ DISCORD_TOKEN=<your bot token>
 - `python-dotenv`
 - `cairosvg`
 - `py-cord`
-- `cairosvg`
 - `python-chess`
