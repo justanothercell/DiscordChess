@@ -21,43 +21,48 @@ client = discord.Bot(intents=discord.Intents.all(), activity=discord.Game(name='
 async def on_message(message: discord.Message):
     if message.author == client.user:
         return
-    if not message.content.startswith('move'):
+    if not (message.content.startswith('move') or message.content in ['flip', 'status']):
         return
-    if message.reference is not None:
-        ref_msg = await message.channel.fetch_message(message.reference.message_id)
-        if ref_msg.author != client.user:
-            return
-        reference = ref_msg.content
-    elif message.channel.type in [discord.ChannelType.public_thread, discord.ChannelType.private_thread]:
-        history = await message.channel.history(limit=2).flatten()
-        if len(history) != 2:
-            return
-        if history[1].type != discord.MessageType.thread_starter_message:
-            return
-        if history[1].author != client.user:
-            return
-        reference = history[1].system_content
-    else:
+    reference = await get_board_msg(message)
+    if reference is None:
         return
-    
     ref_cntnt = reference.split('\n')[0]
-    if not ref_cntnt.startswith('**FEN** `') or not ref_cntnt.endswith('`'):
+
+    if not (ref_cntnt.startswith('**FEN** `') and (ref_cntnt.endswith('`') or ref_cntnt[-7] == '`')):
         return
-    pos = ref_cntnt[9:-1].strip()
+    if ref_cntnt[-7] == '`':
+        pos = ref_cntnt[9:-8].strip()
+        side = ref_cntnt[-3]
+    else:
+        pos = ref_cntnt[9:-1].strip()
+        side = 'W'
     board = await try_board_from_fen(message, pos)
     if board is None:
         return
+        
+    if message.content == 'flip':
+        side = 'W' if side == 'B' else 'B'
+        with render_board(board, side) as img:
+            action = f'Flipped board'
+            await respond_position(message, img, board, side, action)
+        return
+        
+    if message.content == 'status':
+        with render_board(board, side) as img:
+            await respond_position(message, img, board, side, 'Status')
+        return
+        
     moves = [m for m in message.content[4:].split() if len(m) > 0]
+    if len(moves) == 0:
+        return
     for move in moves:
         try:
             board.push_san(move)
         except Exception as e:
             await respond(message, f'**Invalid move `{move}`**\n`{e}`')
             return
-        
-    with render_board(board, num_history=len(moves)) as img:
-        action = f'Moved `{" ".join(moves)}`' if len(moves) > 0 else "Status"
-        await respond_position(message, img, board, action)
+    with render_board(board, side, num_history=len(moves)) as img:
+        await respond_position(message, img, board, side, f'Moved `{" ".join(moves)}`')
 
 
 @client.event
@@ -75,19 +80,19 @@ async def setup(ctx, fen=None):
     board = await try_board_from_fen(ctx, pos)
     if board is None:
         return
-    with render_board(board) as img:
-        await respond_position(ctx, img, board, 'Set up game from FEN')
+    with render_board(board, 'w') as img:
+        await respond_position(ctx, img, board, 'W', 'Set up game from FEN')
 
 async def try_board_from_fen(ctx, fen):
     try:
         return chess.Board(fen)
     except Exception as e:
-        await respond(ctx, f'**Invalid FEN**\n`{e}`', ephemeral=True)
+        await respond(ctx, f'**Invalid FEN**\n`{e}`')
         return None
 
 
 @contextlib.contextmanager
-def render_board(board, num_history=0):
+def render_board(board, side, num_history=0):
     kwargs = {}
     if board.is_check():
         kwargs['check'] = board.king(chess.WHITE if board.turn else chess.BLACK)
@@ -103,6 +108,7 @@ def render_board(board, num_history=0):
         board,
         size=350,
         arrows=arrows,
+        flipped= side=='B',
         **kwargs
     )
     svg2png(bytestring=img, write_to='position.png')
@@ -110,8 +116,8 @@ def render_board(board, num_history=0):
         yield discord.File(pic)
 
 
-async def respond_position(ctx, img, board, action):
-    await respond(ctx, f'**FEN** `{board.fen()}`\n**{action}**\n**{"White" if board.turn else "Black"} to play, move {board.fullmove_number}**', file=img)
+async def respond_position(ctx, img, board, side, action):
+    await respond(ctx, f'**FEN** `{board.fen()}` **{side}**\n**{action}**\n**{"White" if board.turn else "Black"} to play, move {board.fullmove_number}**', file=img)
 
 
 async def respond(context, *args, **kwargs):
@@ -120,5 +126,24 @@ async def respond(context, *args, **kwargs):
     else:
         kwargs['reference'] = context
         await context.channel.send(*args, **kwargs)
+
+
+async def get_board_msg(message):
+    if message.reference is not None:
+        ref_msg = await message.channel.fetch_message(message.reference.message_id)
+        if ref_msg.author != client.user:
+            return None
+        return ref_msg.content
+    elif message.channel.type in [discord.ChannelType.public_thread, discord.ChannelType.private_thread]:
+        history = await message.channel.history(limit=2).flatten()
+        if len(history) != 2:
+            return None
+        if history[1].type != discord.MessageType.thread_starter_message:
+            return None
+        if history[1].author != client.user:
+            return None
+        return history[1].system_content
+    else:
+        return None
 
 client.run(TOKEN)
